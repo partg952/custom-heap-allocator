@@ -1,46 +1,45 @@
-use core::error;
-
+use std::{
+    alloc::{GlobalAlloc, Layout},
+    cell::RefCell,
+    ptr::{addr_of_mut, null_mut},
+    sync::Mutex,
+};
+static N: usize = 1024;
+static mut BUFFER: [u8; N] = [0; N];
+#[derive(Debug)]
 struct BumpAllocator {
-    start: usize,
-    end: usize,
-    current: usize,
+    start: *mut u8,
+    end: *mut u8,
+    current: Mutex<*mut u8>,
 }
-
-impl BumpAllocator {
-    fn new() -> Self {
-        return Self{
-            start:0,
-            end:0,
-            current:0
-        };
-    }
-    fn init(&mut self,start: usize ,end: usize) {
-       self.start = start;
-       self.end = end;
-       self.current = start;
-    }
-    fn allocate(&mut self, size: usize, alignment: usize) -> Result<usize, &str> {
-        let aligned = if self.current % alignment != 0 {
-            ((((self.current as f64) / (alignment as f64)).floor() + 1.0) * alignment as f64)
-                as usize
-        } else {
-            self.current
-        };
-
-        println!("{}", aligned);
-        if aligned + size > self.end {
-            return Err("Heap Space not available");
+unsafe impl Sync for BumpAllocator {}
+unsafe impl GlobalAlloc for BumpAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let alignment = layout.align();
+        let size = layout.size();
+        let mut current = self.current.lock().unwrap();
+        let remainder = *current as usize % alignment;
+        let mut aligned: *mut u8 = *current;
+        if remainder != 0 {
+            aligned = (*current as usize + (alignment - remainder)) as *mut u8;
         }
-        self.current = aligned + size;
-
-        return Ok(aligned);
+        if aligned as usize + size > self.end as usize {
+            return null_mut();
+        }
+        *current = (aligned as usize + size) as *mut u8;
+        // println!("{} bytes allocated, The allocator is working!!" , size); will get stuck since this also calls the allocator and causes infinite recursion.
+        return aligned;
     }
-    fn reset(&mut self) {
-        self.current = self.start;
-    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {}
 }
+#[global_allocator]
+static ALLOCATOR: BumpAllocator = BumpAllocator {
+    start: unsafe { addr_of_mut!(BUFFER) as *mut u8 },
+    end: unsafe { (addr_of_mut!(BUFFER) as *mut u8).add(N) },
+    current: Mutex::new(unsafe { addr_of_mut!(BUFFER) as *mut u8 }),
+};
 
 fn main() {
-    let mut allocator = BumpAllocator::new();
-    allocator.init(1000, 2000);
+    let v = vec![1.1,2.2];
+
 }
